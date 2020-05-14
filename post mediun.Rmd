@@ -45,6 +45,7 @@ data_covid19 <- data_covid19 %>% filter(state == "SC",
 ```
 
 
+
 ```{r,echo=FALSE, warning=FALSE, message=FALSE,include = T}
 # Primeiro precisamos dos dados de latitude e longitude das cidades analisadas. 
 urlfile <- "https://raw.githubusercontent.com/kelvins/Municipios-Brasileiros/master/csv/municipios.csv"
@@ -70,6 +71,8 @@ map_cities
 
 htmlwidgets::saveWidget(map_cities,"map_cities.html")
 ```
+
+
 
 ```{r,echo=FALSE, warning=FALSE, message=FALSE,include = T}
 
