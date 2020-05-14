@@ -1,0 +1,139 @@
+---
+title: "post-medium"
+output: html_document
+---
+
+```{r,echo=FALSE, warning=FALSE, message=FALSE,include = FALSE}
+## bibliotecas
+library(httr)
+library(jsonlite)
+library(dplyr)
+
+## api para pegar os dados mais atualizados de Covid-19
+read_CityDataCovid <- function() {
+  # lê a URL da api   
+  url <- "https://brasil.io/api/dataset/covid19/caso/data?format=json"
+  tf <- GET(url)
+  
+  content <- content(tf, as = 'text')
+  content_from_json <- fromJSON(content)
+  out <- content_from_json$results
+  # verifica se têm mais páginas de dados e pega todas.
+  while(!is.null(content_from_json$`next`)){
+    url <- content_from_json$`next`
+    tf <- GET(url)
+    content <- content(tf, as = 'text')
+    content_from_json <- fromJSON(content)
+    results_df_np <- content_from_json$results
+    out <- bind_rows(out, results_df_np)
+  }
+  return(out)
+}
+
+data_covid19 <- read_CityDataCovid()
+
+# Vcê pode especificar o estado ou a cidade que quer analisar. 
+# Os dados estão disponíveis tanto a nível de cidade, quanto de estado, que pode ser definido no argumento place_type
+# Na base existe o registro diário do número de casos. Caso queira apenas o mais recente basta filtrar a coluna is_last == TRUE
+# Para o exemplo, usaremos os dados masis recentes a nivel de cidades, do estado de Santa Catarina.
+data_covid19 <- data_covid19 %>% filter(state == "SC", 
+                                        place_type == "city", 
+                                        !is.na(city_ibge_code), 
+                                        confirmed > 0, 
+                                        is_last == TRUE)
+
+```
+
+
+```{r,echo=FALSE, warning=FALSE, message=FALSE,include = T}
+# Primeiro precisamos dos dados de latitude e longitude das cidades analisadas. 
+urlfile <- "https://raw.githubusercontent.com/kelvins/Municipios-Brasileiros/master/csv/municipios.csv"
+cities_lat_lng <- read.csv(urlfile,encoding = "UTF-8", col.names = c("COD_IBGE", "Cidade","lat","lng","Capital","Codigo_UF"))
+# é necessário se certificar que o código de cada cidade estará em formato de texto, para o que a função left_join funcione. 
+cities_lat_lng$COD_IBGE <- as.character(cities_lat_lng$COD_IBGE)
+data_covid19 <- left_join(data_covid19, cities_lat_lng, by = c("city_ibge_code" = "COD_IBGE"))
+
+
+library(leaflet)
+
+map_cities <- leaflet(data_covid19) %>% 
+  addTiles() %>%
+  addMarkers(popup = paste0("<b>Cidade: </b>", data_covid19$city,"<br>",
+                   "<b>Casos Confirmados: </b>", data_covid19$confirmed),
+             group = "addMarkers") %>% 
+  addCircleMarkers(popup = paste0("<b>Cidade: </b>", data_covid19$city,"<br>",
+                   "<b>Casos Confirmados: </b>", data_covid19$confirmed),
+             group = "addCircleMarkers") %>%
+  addLayersControl(baseGroups = c("addMarkers","addCircleMarkers"), 
+                   options = layersControlOptions(collapsed = F))
+map_cities 
+
+htmlwidgets::saveWidget(map_cities,"map_cities.html")
+```
+
+```{r,echo=FALSE, warning=FALSE, message=FALSE,include = T}
+
+map_total_cases <- leaflet(data_covid19) %>% addTiles() %>%
+  addProviderTiles(providers$CartoDB.Positron) %>% 
+  addCircleMarkers(
+    radius = ~sqrt(data_covid19$confirmed) * 2,
+    fillOpacity = 0.5, stroke = F, 
+    popup = paste0("<b>Cidade: </b>", data_covid19$city,"<br>",
+                   "<b>Casos Confirmados: </b>", data_covid19$confirmed),
+    label = ~city
+  )
+
+map_total_cases 
+
+htmlwidgets::saveWidget(map_total_cases,"map_total_cases.html")
+```
+
+
+
+```{r,echo=FALSE, warning=FALSE, message=FALSE,include = T}
+# bibliotecas
+library(brazilmaps)
+library(sf)
+
+# pegando as geometrias das cidades de Santa Catarina (42)
+shp_sf <- get_brmap("City", geo.filter = list(State = 42))
+shp_sf$City <- as.character(shp_sf$City)
+# definindo que o dataframe contém dados geométricos
+shp_sf <- st_as_sf(shp_sf)%>%
+ st_transform(4326)
+#unindo os dados de COVID-19 com as geometrias das cidades.
+shp_sf <- shp_sf %>% filter(City %in% data_covid19$city_ibge_code)
+shp_sf <- left_join(shp_sf,data_covid19, by = c("City" = "city_ibge_code"))
+
+
+## define cores para cada conjunto numérico
+pal <- colorNumeric(palette = "Reds", domain = shp_sf$confirmed_per_100k_inhabitants)
+
+# heatmap dos casos de covid-19, por 100 mil habitantes, em SC.
+map_100k <- leaflet(shp_sf %>% filter(!is.na(confirmed_per_100k_inhabitants), confirmed >0)) %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addPolygons(data = shp_sf,
+              smoothFactor = 0.5,
+              fillOpacity = 0.5,
+              weight = 0.5,
+              color = ~pal(confirmed_per_100k_inhabitants),
+              opacity = 0.8,
+              highlightOptions = highlightOptions(color = "black",
+                                                  weight = 2,
+                                                  bringToFront = TRUE),
+              popup = ~paste0(sep = " ",
+                             "<b>Cidade: </b>", city, "<br>",
+                             "<b>Casos confrmados: </b>", confirmed, "<br>",
+                             "<b>Casos por 100k habitantes: </b>", confirmed_per_100k_inhabitants),
+              label = ~city) %>% 
+        addLegend("bottomright",
+                  title = "Casos confirmados por<br>100k habitantes", 
+                  pal = pal, 
+                  values = ~confirmed_per_100k_inhabitants, 
+                  opacity = 0.8)
+
+map_100k
+
+htmlwidgets::saveWidget(map_100k,"map_100k.html")
+```
+
